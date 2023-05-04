@@ -431,6 +431,22 @@ impl RendezvousMediator {
         Ok(())
     }
 
+    async fn register_pk_tcp(&mut self, socket: &mut FramedStream) -> ResultType<()> {
+        let mut msg_out = Message::new();
+        let pk = Config::get_key_pair().1;
+        let uuid = hbb_common::get_uuid();
+        let id = Config::get_id();
+        self.last_id_pk_registry = id.clone();
+        msg_out.set_register_pk(RegisterPk {
+            id,
+            uuid: uuid.into(),
+            pk: pk.into(),
+            ..Default::default()
+        });
+        socket.send(&msg_out).await?;
+        Ok(())
+    }
+
     async fn handle_uuid_mismatch(&mut self, socket: &mut FramedSocket) -> ResultType<()> {
         if self.last_id_pk_registry != Config::get_id() {
             return Ok(());
@@ -461,7 +477,7 @@ impl RendezvousMediator {
             return self.register_pk(socket).await;
         }
         let id = Config::get_id();
-        log::trace!(
+        log::info!(
             "Register my id {:?} to rendezvous server {:?}",
             id,
             self.addr,
@@ -474,6 +490,34 @@ impl RendezvousMediator {
             ..Default::default()
         });
         socket.send(&msg_out, self.addr.to_owned()).await?;
+        Ok(())
+    }
+
+    async fn register_peer_tcp(&mut self, socket: &mut FramedStream) -> ResultType<()> {
+        if !SOLVING_PK_MISMATCH.lock().unwrap().is_empty() {
+            return Ok(());
+        }
+        if !Config::get_key_confirmed() || !Config::get_host_key_confirmed(&self.host_prefix) {
+            log::info!(
+                "register_pk of {} due to key not confirmed",
+                self.host_prefix
+            );
+            return self.register_pk_tcp(socket).await;
+        }
+        let id = Config::get_id();
+        log::info!(
+            "Register my id {:?} to rendezvous server {:?}",
+            id,
+            self.addr,
+        );
+        let mut msg_out = Message::new();
+        let serial = Config::get_serial();
+        msg_out.set_register_peer(RegisterPeer {
+            id,
+            serial,
+            ..Default::default()
+        });
+        socket.send(&msg_out).await?;
         Ok(())
     }
 

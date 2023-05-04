@@ -333,11 +333,12 @@ function update() {
 }
 
 function bring_to_top(idx=-1) {
+    view.windowState = View.WINDOW_HIDDEN;
     if (view.windowState == View.WINDOW_HIDDEN || view.windowState == View.WINDOW_MINIMIZED) {
         if (is_linux) {
             view.focus = self;
         } else {
-            view.windowState = View.WINDOW_SHOWN;
+            //view.windowState = View.WINDOW_SHOWN;
         }
         if (idx >= 0) body.cur = idx;
     } else {

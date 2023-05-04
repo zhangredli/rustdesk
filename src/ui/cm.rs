@@ -59,11 +59,7 @@ impl InvokeUiCM for SciterHandler {
     fn update_voice_call_state(&self, client: &crate::ui_cm_interface::Client) {
         self.call(
             "updateVoiceCallState",
-            &make_args!(
-                client.id,
-                client.in_voice_call,
-                client.incoming_voice_call
-            ),
+            &make_args!(client.id, client.in_voice_call, client.incoming_voice_call),
         );
     }
 }

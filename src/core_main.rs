@@ -202,18 +202,20 @@ pub fn core_main() -> Option<Vec<String>> {
             return None;
         } else if args[0] == "--password" {
             if args.len() == 2 {
-                if crate::platform::is_root() {
-                    crate::ipc::set_permanent_password(args[1].to_owned()).unwrap();
-                } else {
-                    println!("Administrative privileges required!");
-                }
+                crate::ipc::set_permanent_password(args[1].to_owned()).unwrap();
+            } else {
+                println!("{}", crate::ipc::get_permanent_password());
             }
             return None;
         } else if args[0] == "--get-id" {
-            if crate::platform::is_root() {
-                println!("{}", crate::ipc::get_id());
-            } else {
-                println!("Permission denied!");
+            println!("{}", crate::ipc::get_id());
+            return None;
+        } else if args[0] == "--get_rendezvous_server" {
+            println!("{}", crate::ipc::get_rendezvous_server_sync());
+            return None;
+        } else if args[0] == "--set_rendezvous_server" {
+            if args.len() == 2 {
+                crate::ipc::set_rendezvous_server(args[1].to_owned()).unwrap();
             }
             return None;
         } else if args[0] == "--check-hwcodec-config" {

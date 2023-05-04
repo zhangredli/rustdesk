@@ -381,6 +381,8 @@ async fn handle(data: Data, stream: &mut Connection) {
                         Config::get_rendezvous_server(),
                         Config::get_rendezvous_servers().join(",")
                     ));
+                } else if name == "rendezvous_server_sync" {
+                    value = Some(Config::get_rendezvous_server());
                 } else if name == "rendezvous_servers" {
                     value = Some(Config::get_rendezvous_servers().join(","));
                 } else {
@@ -398,6 +400,8 @@ async fn handle(data: Data, stream: &mut Connection) {
                     Config::set_permanent_password(&value);
                 } else if name == "salt" {
                     Config::set_salt(&value);
+                } else if name == "rendezvous_server" {
+                    Config::set_rendezvous_server(&value);
                 } else {
                     return;
                 }
@@ -723,6 +727,19 @@ pub async fn get_rendezvous_server(ms_timeout: u64) -> (String, Vec<String>) {
             Config::get_rendezvous_servers(),
         )
     }
+}
+
+pub fn get_rendezvous_server_sync() -> String {
+    if let Ok(Some(v)) = get_config("rendezvous_server_sync") {
+        v
+    } else {
+        Config::get_rendezvous_server()
+    }
+}
+
+pub fn set_rendezvous_server(rendezvous_server: String) -> ResultType<()> {
+    Config::set_rendezvous_server(&rendezvous_server);
+    set_config("rendezvous_server", rendezvous_server)
 }
 
 async fn get_options_(ms_timeout: u64) -> ResultType<HashMap<String, String>> {

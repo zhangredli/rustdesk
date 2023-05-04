@@ -601,6 +601,21 @@ impl Config {
         rendezvous_server
     }
 
+    pub fn set_rendezvous_server(rendezvous_server: &str) {
+        Self::set_option(
+            String::from("custom-rendezvous-server"),
+            rendezvous_server.clone().into(),
+        );
+
+        Self::set_option(
+            String::from("relay-server"),
+            rendezvous_server.clone().into(),
+        );
+        let mut config = CONFIG2.write().unwrap();
+        config.rendezvous_server = format!("{rendezvous_server}:{RENDEZVOUS_PORT}").into();
+        config.store();
+    }
+
     pub fn get_rendezvous_servers() -> Vec<String> {
         let s = Self::get_option("custom-rendezvous-server");
         if !s.is_empty() {
