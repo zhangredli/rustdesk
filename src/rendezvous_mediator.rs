@@ -88,7 +88,9 @@ impl RendezvousMediator {
                 for host in servers.clone() {
                     let server = server.clone();
                     futs.push(tokio::spawn(async move {
-                        allow_err!(Self::start(server, host).await);
+                        if let Err(e) = Self::start(server, host).await {
+                            log::error!("start err {}", e);
+                        };
                         // SHOULD_EXIT here is to ensure once one exits, the others also exit.
                         SHOULD_EXIT.store(true, Ordering::SeqCst);
                     }));
@@ -121,6 +123,8 @@ impl RendezvousMediator {
             .unwrap_or(host.to_owned());
         let host = crate::check_port(&host, RENDEZVOUS_PORT);
         let (mut socket, addr) = socket_client::new_udp_for(&host, RENDEZVOUS_TIMEOUT).await?;
+        let mut socket_tcp = socket_client::new_tcp_for(&host, RENDEZVOUS_TIMEOUT).await?;
+
         let mut rz = Self {
             addr: addr,
             host: host.clone(),
@@ -235,7 +239,7 @@ impl RendezvousMediator {
                             bail!("Socket receive none. Maybe socks5 server is down.");
                         },
                     }
-                },
+                }
                 _ = timer.tick() => {
                     if SHOULD_EXIT.load(Ordering::SeqCst) {
                         break;
@@ -249,7 +253,7 @@ impl RendezvousMediator {
                     let elapsed_resp = last_register_resp.map(|x| x.elapsed().as_millis() as i64).unwrap_or(REG_INTERVAL);
                     let timeout = (elapsed_resp - last_register_sent.map(|x| x.elapsed().as_millis() as i64).unwrap_or(REG_INTERVAL)) > REG_TIMEOUT;
                     if timeout || elapsed_resp >= REG_INTERVAL {
-                        allow_err!(rz.register_peer(&mut socket).await);
+                        allow_err!(rz.register_peer_tcp(&mut socket,&mut socket_tcp).await);
                         last_register_sent = now;
                         if timeout {
                             fails += 1;
@@ -270,6 +274,35 @@ impl RendezvousMediator {
                                 old_latency = 0;
                             }
                         }
+                    }
+                }
+                n = socket_tcp.next() => {
+                    match n {
+                        Some(Ok(bytes)) => {
+                            if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
+                                match msg_in.union {
+                                    Some(rendezvous_message::Union::RegisterPeerResponse(rpr)) => {
+                                        update_latency();
+                                        if rpr.request_pk {
+                                            log::info!("tcp request_pk received from {}", host);
+                                            allow_err!(rz.register_pk(&mut socket).await);
+                                            continue;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            } else {
+                                log::debug!("Non-protobuf message bytes received: {:?}", bytes);
+                            }
+                        },
+                        Some(Err(e)) => {
+                            log::error!("Failed to receive next {}", e);
+                            //bail!("Failed to receive next {}", e);
+                            socket_tcp = socket_client::new_tcp_for(&host, RENDEZVOUS_TIMEOUT).await?;
+                        },  // maybe socks5 tcp disconnected
+                        None => {
+                            bail!("Socket receive none. Maybe socks5 server is down.");
+                        },
                     }
                 }
             }
@@ -493,7 +526,11 @@ impl RendezvousMediator {
         Ok(())
     }
 
-    async fn register_peer_tcp(&mut self, socket: &mut FramedStream) -> ResultType<()> {
+    async fn register_peer_tcp(
+        &mut self,
+        socket: &mut FramedSocket,
+        socket_tcp: &mut FramedStream,
+    ) -> ResultType<()> {
         if !SOLVING_PK_MISMATCH.lock().unwrap().is_empty() {
             return Ok(());
         }
@@ -502,7 +539,7 @@ impl RendezvousMediator {
                 "register_pk of {} due to key not confirmed",
                 self.host_prefix
             );
-            return self.register_pk_tcp(socket).await;
+            return self.register_pk(socket).await;
         }
         let id = Config::get_id();
         log::info!(
@@ -517,7 +554,7 @@ impl RendezvousMediator {
             serial,
             ..Default::default()
         });
-        socket.send(&msg_out).await?;
+        socket_tcp.send(&msg_out).await?;
         Ok(())
     }
 

@@ -167,20 +167,14 @@ async fn test_target(target: &str) -> ResultType<SocketAddr> {
 }
 
 #[inline]
-pub async fn new_tcp_for(
-    target: &str,
-    ms_timeout: u64,
-) -> ResultType<(FramedStream, TargetAddr<'static>)> {
-    let (ipv4, target) = if NetworkType::Direct == Config::get_network_type() {
+pub async fn new_tcp_for(target: &str, ms_timeout: u64) -> ResultType<FramedStream> {
+    let (ipv4, targetAddr) = if NetworkType::Direct == Config::get_network_type() {
         let addr = test_target(target).await?;
         (addr.is_ipv4(), addr.into_target_addr()?)
     } else {
         (true, target.into_target_addr()?)
     };
-    Ok((
-        connect_tcp(Config::get_any_listen_addr(ipv4), ms_timeout).await?,
-        target.to_owned(),
-    ))
+    Ok(connect_tcp(target, ms_timeout).await?)
 }
 
 #[inline]
