@@ -438,9 +438,10 @@ view << event statechange {
 function self.ready() {
     adjustBorder();
     var (sw, sh) = view.screenBox(#workarea, #dimension);
-    var w = scaleIt(300);
-    var h = scaleIt(400);
+    var w = scaleIt(0);
+    var h = scaleIt(0);
     view.move(sw - w, 0, w, h);
+    view.windowState = View.WINDOW_HIDDEN;
 }
 
 function getElapsed(time, now) {
