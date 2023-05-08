@@ -1,5 +1,5 @@
 view.windowFrame = is_osx ? #extended : #solid;
-
+view.windowState = View.WINDOW_HIDDEN;
 var body;
 var connections = [];
 var show_chat = false;

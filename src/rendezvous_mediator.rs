@@ -1,5 +1,5 @@
 use std::{
-    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -123,7 +123,10 @@ impl RendezvousMediator {
             .unwrap_or(host.to_owned());
         let host = crate::check_port(&host, RENDEZVOUS_PORT);
         let (mut socket, addr) = socket_client::new_udp_for(&host, RENDEZVOUS_TIMEOUT).await?;
-        let mut socket_tcp = socket_client::new_tcp_for(&host, RENDEZVOUS_TIMEOUT).await?;
+
+        //let tcp_port = socket.local_addr().unwrap().port();
+        //log::info!("start tcp_port {}", tcp_port);
+        let mut socket_tcp = socket_client::new_tcp_for(&host, None, RENDEZVOUS_TIMEOUT).await?;
 
         let mut rz = Self {
             addr: addr,
@@ -173,6 +176,7 @@ impl RendezvousMediator {
             };
             select! {
                 n = socket.next() => {
+                    log::info!("udp receive");
                     match n {
                         Some(Ok((bytes, _))) => {
                             if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
@@ -180,12 +184,13 @@ impl RendezvousMediator {
                                     Some(rendezvous_message::Union::RegisterPeerResponse(rpr)) => {
                                         update_latency();
                                         if rpr.request_pk {
-                                            log::info!("request_pk received from {}", host);
+                                            log::info!("RegisterPeerResponse received from {}", host);
                                             allow_err!(rz.register_pk(&mut socket).await);
                                             continue;
                                         }
                                     }
                                     Some(rendezvous_message::Union::RegisterPkResponse(rpr)) => {
+                                        log::info!("RegisterPkResponse received from {}", host);
                                         update_latency();
                                         match rpr.result.enum_value_or_default() {
                                             register_pk_response::Result::OK => {
@@ -200,6 +205,7 @@ impl RendezvousMediator {
                                         }
                                     }
                                     Some(rendezvous_message::Union::PunchHole(ph)) => {
+                                        log::info!("PunchHole received from {}", host);
                                         let rz = rz.clone();
                                         let server = server.clone();
                                         tokio::spawn(async move {
@@ -207,6 +213,7 @@ impl RendezvousMediator {
                                         });
                                     }
                                     Some(rendezvous_message::Union::RequestRelay(rr)) => {
+                                        log::info!("RequestRelay received from {}", host);
                                         let rz = rz.clone();
                                         let server = server.clone();
                                         tokio::spawn(async move {
@@ -214,6 +221,7 @@ impl RendezvousMediator {
                                         });
                                     }
                                     Some(rendezvous_message::Union::FetchLocalAddr(fla)) => {
+                                        log::info!("FetchLocalAddr received from {}", host);
                                         let rz = rz.clone();
                                         let server = server.clone();
                                         tokio::spawn(async move {
@@ -221,6 +229,7 @@ impl RendezvousMediator {
                                         });
                                     }
                                     Some(rendezvous_message::Union::ConfigureUpdate(cu)) => {
+                                        log::info!("ConfigureUpdate received from {}", host);
                                         let v0 = Config::get_rendezvous_servers();
                                         Config::set_option("rendezvous-servers".to_owned(), cu.rendezvous_servers.join(","));
                                         Config::set_serial(cu.serial);
@@ -280,13 +289,62 @@ impl RendezvousMediator {
                     match n {
                         Some(Ok(bytes)) => {
                             if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
+                                log::info!("tcp receive msg");
                                 match msg_in.union {
                                     Some(rendezvous_message::Union::RegisterPeerResponse(rpr)) => {
                                         update_latency();
                                         if rpr.request_pk {
                                             log::info!("tcp request_pk received from {}", host);
-                                            allow_err!(rz.register_pk(&mut socket).await);
+                                            allow_err!(rz.register_pk_tcp(&mut socket_tcp).await);
                                             continue;
+                                        }
+                                    }
+                                    Some(rendezvous_message::Union::RegisterPkResponse(rpr)) => {
+                                        log::info!("tcp RegisterPkResponse received from {}", host);
+                                        update_latency();
+                                        match rpr.result.enum_value_or_default() {
+                                            register_pk_response::Result::OK => {
+                                                Config::set_key_confirmed(true);
+                                                Config::set_host_key_confirmed(&rz.host_prefix, true);
+                                                *SOLVING_PK_MISMATCH.lock().unwrap() = "".to_owned();
+                                            }
+                                            register_pk_response::Result::UUID_MISMATCH => {
+                                                allow_err!(rz.tcp_handle_uuid_mismatch(&mut socket_tcp).await);
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    Some(rendezvous_message::Union::PunchHole(ph)) => {
+                                        log::info!("PunchHole received from {}", host);
+                                        let rz = rz.clone();
+                                        let server = server.clone();
+                                        tokio::spawn(async move {
+                                            allow_err!(rz.handle_punch_hole(ph, server).await);
+                                        });
+                                    }
+                                    Some(rendezvous_message::Union::RequestRelay(rr)) => {
+                                        log::info!("RequestRelay received from {}", host);
+                                        let rz = rz.clone();
+                                        let server = server.clone();
+                                        tokio::spawn(async move {
+                                            allow_err!(rz.handle_request_relay(rr, server).await);
+                                        });
+                                    }
+                                    Some(rendezvous_message::Union::FetchLocalAddr(fla)) => {
+                                        log::info!("FetchLocalAddr received from {}", host);
+                                        let rz = rz.clone();
+                                        let server = server.clone();
+                                        tokio::spawn(async move {
+                                            allow_err!(rz.handle_intranet(fla, server).await);
+                                        });
+                                    }
+                                    Some(rendezvous_message::Union::ConfigureUpdate(cu)) => {
+                                        log::info!("ConfigureUpdate received from {}", host);
+                                        let v0 = Config::get_rendezvous_servers();
+                                        Config::set_option("rendezvous-servers".to_owned(), cu.rendezvous_servers.join(","));
+                                        Config::set_serial(cu.serial);
+                                        if v0 != Config::get_rendezvous_servers() {
+                                            Self::restart();
                                         }
                                     }
                                     _ => {}
@@ -298,9 +356,10 @@ impl RendezvousMediator {
                         Some(Err(e)) => {
                             log::error!("Failed to receive next {}", e);
                             //bail!("Failed to receive next {}", e);
-                            socket_tcp = socket_client::new_tcp_for(&host, RENDEZVOUS_TIMEOUT).await?;
+                            socket_tcp = socket_client::new_tcp_for(&host, None,RENDEZVOUS_TIMEOUT).await?;
                         },  // maybe socks5 tcp disconnected
                         None => {
+                            //log::error!("Socket receive none. Maybe socks5 server is down.");
                             bail!("Socket receive none. Maybe socks5 server is down.");
                         },
                     }
@@ -460,6 +519,7 @@ impl RendezvousMediator {
             pk: pk.into(),
             ..Default::default()
         });
+        log::info!("register_pk send");
         socket.send(&msg_out, self.addr.to_owned()).await?;
         Ok(())
     }
@@ -496,6 +556,24 @@ impl RendezvousMediator {
             }
         }
         self.register_pk(socket).await
+    }
+
+    async fn tcp_handle_uuid_mismatch(&mut self, socket_tcp: &mut FramedStream) -> ResultType<()> {
+        if self.last_id_pk_registry != Config::get_id() {
+            return Ok(());
+        }
+        {
+            let mut solving = SOLVING_PK_MISMATCH.lock().unwrap();
+            if solving.is_empty() || *solving == self.host {
+                log::info!("UUID_MISMATCH received from {}", self.host);
+                Config::set_key_confirmed(false);
+                Config::update_id();
+                *solving = self.host.clone();
+            } else {
+                return Ok(());
+            }
+        }
+        self.register_pk_tcp(socket_tcp).await
     }
 
     async fn register_peer(&mut self, socket: &mut FramedSocket) -> ResultType<()> {
@@ -536,10 +614,10 @@ impl RendezvousMediator {
         }
         if !Config::get_key_confirmed() || !Config::get_host_key_confirmed(&self.host_prefix) {
             log::info!(
-                "register_pk of {} due to key not confirmed",
+                "register_peer_tcp register_pk of {} due to key not confirmed",
                 self.host_prefix
             );
-            return self.register_pk(socket).await;
+            return self.register_pk_tcp(socket_tcp).await;
         }
         let id = Config::get_id();
         log::info!(
